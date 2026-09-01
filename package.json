@@ -13,7 +13,9 @@
     "predev": "npm run build -w @interview/shared",
     "dev": "concurrently -k -n shared,server,desktop \"npm run dev -w @interview/shared\" \"npm run dev -w @interview/server\" \"npm run dev -w @interview/desktop\"",
     "build": "npm run build -w @interview/shared && npm run build -w @interview/server && npm run build -w @interview/desktop",
+    "pretypecheck": "npm run build -w @interview/shared",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "test:transcription": "tsx --tsconfig apps/desktop/tsconfig.json --test datasets/evaluation/*.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

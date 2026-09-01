@@ -12,5 +12,10 @@ export default defineConfig({
 
   renderer: {
     plugins: [react()],
+    build: {
+      // Keep AudioWorklet modules as same-origin files so the strict CSP does
+      // not need to allow executable data URLs.
+      assetsInlineLimit: 0,
+    },
   },
 });

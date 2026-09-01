@@ -1,0 +1,15 @@
+listening-port=3478
+tls-listening-port=5349
+
+fingerprint
+use-auth-secret
+static-auth-secret=replace-with-the-same-secret-as-TURN_SHARED_SECRET
+realm=turn.example.com
+
+stale-nonce
+no-cli
+no-loopback-peers
+no-multicast-peers
+
+cert=/etc/letsencrypt/live/turn.example.com/fullchain.pem
+pkey=/etc/letsencrypt/live/turn.example.com/privkey.pem

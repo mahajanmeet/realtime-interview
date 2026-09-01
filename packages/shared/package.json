@@ -12,8 +12,8 @@
     }
   },
   "scripts": {
-    "dev": "tsup src/index.ts --format esm --dts --watch",
-    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup ./src/index.ts --format esm --dts --watch",
+    "build": "tsup ./src/index.ts --format esm --dts --clean",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

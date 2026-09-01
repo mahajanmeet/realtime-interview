@@ -15,4 +15,10 @@ Thumbs.db
 
 coverage/
 
+native/asr-worker/build/
+native/asr-worker/vendor/
+native/asr-worker/models/*
+!native/asr-worker/models/README.md
+!native/asr-worker/models/hotwords.txt
+
 .vscode/*.local.json

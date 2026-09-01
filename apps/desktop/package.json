@@ -1,17 +1,63 @@
 {
   "name": "@interview/desktop",
   "version": "0.1.0",
+  "description": "Realtime Interview desktop application",
+  "author": "Realtime Interview",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "package:win": "npm run build && electron-builder --win nsis --x64",
     "typecheck": "tsc --noEmit"
+  },
+  "build": {
+    "appId": "com.realtimeinterview.desktop",
+    "electronVersion": "44.0.0",
+    "electronDist": "../../node_modules/electron/dist",
+    "productName": "Realtime Interview",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../native/asr-worker/build/Release",
+        "to": "asr",
+        "filter": [
+          "asr-worker.exe",
+          "*.dll"
+        ]
+      },
+      {
+        "from": "../../native/asr-worker/models",
+        "to": "asr/models",
+        "filter": [
+          "encoder.onnx",
+          "decoder.onnx",
+          "joiner.onnx",
+          "tokens.txt",
+          "bpe.vocab",
+          "hotwords.txt"
+        ]
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "win": {
+      "signAndEditExecutable": false
+    }
   },
   "dependencies": {
     "@interview/shared": "^0.1.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.3.0",
@@ -19,6 +65,7 @@
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^44.0.0",
+    "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "vite": "^7.3.6"
   }

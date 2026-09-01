@@ -1,0 +1,37 @@
+[
+  {
+    "id": "backend-postgresql",
+    "context": "We store account data in a relational database and execute a query for each report.",
+    "raw": "We use post grass sequel for the database.",
+    "expected": "We use PostgreSQL for the database.",
+    "technicalTerms": ["PostgreSQL"]
+  },
+  {
+    "id": "backend-kubectl",
+    "context": "The deployment runs in a Kubernetes cluster namespace.",
+    "raw": "I inspect the pod with cube control.",
+    "expected": "I inspect the pod with kubectl.",
+    "technicalTerms": ["kubectl"]
+  },
+  {
+    "id": "backend-nginx",
+    "context": "The HTTP proxy sits in front of the application server.",
+    "raw": "Engine x handles the proxy traffic.",
+    "expected": "Nginx handles the proxy traffic.",
+    "technicalTerms": ["Nginx"]
+  },
+  {
+    "id": "meaning-preservation",
+    "context": "We use Redis as a database in this service.",
+    "raw": "Redis is relational.",
+    "expected": "Redis is relational.",
+    "technicalTerms": ["Redis"]
+  },
+  {
+    "id": "ambiguous-sequel",
+    "context": "We discussed the second film in the series.",
+    "raw": "The sequel was better.",
+    "expected": "The sequel was better.",
+    "technicalTerms": []
+  }
+]
