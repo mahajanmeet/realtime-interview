@@ -297,6 +297,7 @@ export class RealtimePeer {
     const answer = await this.peerConnection.createAnswer();
 
     await this.peerConnection.setLocalDescription(answer);
+    await this.limitAudioBitrate();
 
     if (!answer.sdp) {
       throw new Error('WebRTC answer did not contain SDP.');
@@ -317,6 +318,7 @@ export class RealtimePeer {
       type: 'answer',
       sdp,
     });
+    await this.limitAudioBitrate();
 
     await this.flushPendingIceCandidates();
   }
@@ -376,6 +378,20 @@ export class RealtimePeer {
 
     if (this.localAudio.system) {
       stopMediaStream(this.localAudio.system);
+    }
+  }
+
+  private async limitAudioBitrate(): Promise<void> {
+    for (const sender of this.peerConnection.getSenders()) {
+      if (sender.track?.kind !== 'audio') continue;
+      const parameters = sender.getParameters();
+      if (!parameters.encodings?.length) continue;
+      for (const encoding of parameters.encodings) encoding.maxBitrate = 32_000;
+      try {
+        await sender.setParameters(parameters);
+      } catch {
+        logger.warn('Audio bitrate limit is unsupported by this runtime.');
+      }
     }
   }
 

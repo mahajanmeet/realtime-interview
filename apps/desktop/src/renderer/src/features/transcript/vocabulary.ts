@@ -128,10 +128,105 @@ export const composeVocabularyProfiles = (
   return { id, entries: [...entries.values()] };
 };
 
-export const interviewVocabulary = composeVocabularyProfiles('backend-aws', [
+export const machineLearningVocabulary: VocabularyProfile = {
+  id: 'machine-learning',
+  entries: [
+    {
+      canonical: 'neural network',
+      aliases: ['neural net work', 'neural net works'],
+      context: ['train', 'model', 'learning', 'classification'],
+      weight: 1,
+    },
+    {
+      canonical: 'sequence modeling',
+      aliases: ['sequence modelling', 'sequence model ling'],
+      context: ['input', 'output', 'language', 'prediction'],
+      weight: 1,
+    },
+    {
+      canonical: 'RNN',
+      aliases: ['r n n'],
+      context: ['neural', 'network', 'sequence', 'recurrent'],
+      weight: 1,
+    },
+    {
+      canonical: 'CNN',
+      aliases: ['c n n'],
+      context: ['convolution', 'image', 'network', 'neural'],
+      weight: 1,
+    },
+    {
+      canonical: 'LSTM',
+      aliases: ['l s t m'],
+      context: ['memory', 'network', 'sequence'],
+      weight: 1,
+    },
+    { canonical: 'NLP', aliases: ['n l p'], context: ['text', 'language', 'sentiment'], weight: 1 },
+    { canonical: 'LLM', aliases: ['l l m'], context: ['language', 'model', 'tokens'], weight: 1 },
+    {
+      canonical: 'PyTorch',
+      aliases: ['pie torch'],
+      context: ['tensor', 'model', 'train', 'Python'],
+      weight: 1,
+    },
+    {
+      canonical: 'TensorFlow',
+      aliases: ['tensor flow'],
+      context: ['model', 'train', 'learning'],
+      weight: 1,
+    },
+    {
+      canonical: 'backpropagation',
+      aliases: ['back propagation'],
+      context: ['gradient', 'neural', 'train', 'loss'],
+      weight: 1,
+    },
+  ],
+};
+
+export const applicationVocabulary: VocabularyProfile = {
+  id: 'application-development',
+  entries: [
+    {
+      canonical: 'TypeScript',
+      aliases: ['type script'],
+      context: ['JavaScript', 'types', 'frontend', 'compiler'],
+      weight: 1,
+    },
+    {
+      canonical: 'JavaScript',
+      aliases: ['java script'],
+      context: ['browser', 'frontend', 'React', 'Node'],
+      weight: 1,
+    },
+    {
+      canonical: 'GraphQL',
+      aliases: ['graph q l'],
+      context: ['API', 'query', 'schema'],
+      weight: 1,
+    },
+    {
+      canonical: 'MongoDB',
+      aliases: ['mongo d b'],
+      context: ['database', 'document', 'collection'],
+      weight: 1,
+    },
+    {
+      canonical: 'CI/CD',
+      aliases: ['c i c d'],
+      context: ['pipeline', 'deployment', 'build'],
+      weight: 1,
+    },
+    { canonical: 'GCP', aliases: ['g c p'], context: ['cloud', 'Google', 'compute'], weight: 1 },
+  ],
+};
+
+export const interviewVocabulary = composeVocabularyProfiles('technical-interview', [
   generalTechnicalVocabulary,
   backendVocabulary,
   awsVocabulary,
+  machineLearningVocabulary,
+  applicationVocabulary,
 ]);
 
 export const getHotwords = (profile: VocabularyProfile): string[] =>

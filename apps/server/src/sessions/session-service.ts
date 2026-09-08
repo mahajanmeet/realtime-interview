@@ -114,6 +114,9 @@ export class SessionService {
     session.candidate = {
       tokenHash: this.hash(peerToken),
     };
+    // Keep the invitation short-lived, but allow a full working-day call and
+    // authenticated reconnects after the candidate has joined.
+    session.expiresAt = Date.now() + 8 * 60 * 60 * 1000;
 
     const signalTicket = this.createSignalTicket(session.id, 'candidate');
 

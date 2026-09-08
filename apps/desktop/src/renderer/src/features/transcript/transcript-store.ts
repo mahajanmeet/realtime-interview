@@ -10,7 +10,9 @@ export class TranscriptStore {
   upsert(segment: TranscriptEntry): void {
     // ASR workers on separate devices can generate the same segment ID.
     // Namespace it locally so both sides remain visible in one conversation.
-    this.segments.set(`${segment.speaker}:${segment.id}`, segment);
+    const key = `${segment.speaker}:${segment.id}`;
+    if (this.segments.get(key)?.status === 'final' && segment.status === 'partial') return;
+    this.segments.set(key, segment);
   }
 
   all(): TranscriptEntry[] {

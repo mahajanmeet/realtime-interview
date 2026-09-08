@@ -6,6 +6,7 @@ import {
 
 import { getApiUrl } from './api';
 import { logger } from './logger';
+import { TranscriptOutbox } from './transcript-outbox';
 
 type SignalingCallbacks = {
   onMessage(message: ServerSignalMessage): void;
@@ -23,6 +24,9 @@ export class SignalingClient {
   private manuallyClosed = false;
 
   private reconnectAttempts = 0;
+  private readonly transcripts = new TranscriptOutbox();
+  private transcriptTimer: ReturnType<typeof setInterval> | null = null;
+  private peerPresent = false;
 
   constructor(private readonly callbacks: SignalingCallbacks) {}
 
@@ -39,6 +43,11 @@ export class SignalingClient {
   }
 
   send(message: ClientSignalMessage): void {
+    if (message.type === 'transcript-segment') {
+      this.transcripts.enqueue(message);
+      if (message.segment.status === 'final') this.flushTranscripts();
+      return;
+    }
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       throw new Error('Signaling connection is not open.');
     }
@@ -49,6 +58,9 @@ export class SignalingClient {
   disconnect(): void {
     this.manuallyClosed = true;
     this.clearReconnectTimer();
+    if (this.transcriptTimer) clearInterval(this.transcriptTimer);
+    this.transcriptTimer = null;
+    this.peerPresent = false;
 
     const socket = this.socket;
 
@@ -67,6 +79,12 @@ export class SignalingClient {
     const socket = new WebSocket(url);
 
     this.socket = socket;
+    this.peerPresent = false;
+    if (this.transcriptTimer) clearInterval(this.transcriptTimer);
+    this.transcriptTimer = setInterval(() => this.flushTranscripts(), 100);
+    const openTimeout = setTimeout(() => {
+      if (this.socket === socket && socket.readyState === WebSocket.CONNECTING) socket.close();
+    }, 15_000);
 
     socket.addEventListener('open', () => {
       if (this.socket !== socket) {
@@ -74,11 +92,13 @@ export class SignalingClient {
       }
 
       this.reconnectAttempts = 0;
+      clearTimeout(openTimeout);
       logger.info('Signaling connection opened.');
       this.callbacks.onOpen();
     });
 
     socket.addEventListener('message', (event) => {
+      if (this.socket !== socket) return;
       let decoded: unknown;
 
       try {
@@ -95,15 +115,24 @@ export class SignalingClient {
         return;
       }
 
+      if (parsed.data.type === 'peer-connected') {
+        this.peerPresent = true;
+        this.transcripts.replay();
+        this.flushTranscripts();
+      } else if (parsed.data.type === 'peer-disconnected') {
+        this.peerPresent = false;
+      }
       this.callbacks.onMessage(parsed.data);
     });
 
     socket.addEventListener('close', () => {
+      clearTimeout(openTimeout);
       if (this.socket !== socket) {
         return;
       }
 
       this.socket = null;
+      this.peerPresent = false;
       logger.warn('Signaling connection closed.');
       this.callbacks.onClose();
 
@@ -120,7 +149,7 @@ export class SignalingClient {
 
     this.callbacks.onReconnecting();
 
-    const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 10_000);
+    const delay = Math.min(500 * 2 ** this.reconnectAttempts, 10_000) + Math.random() * 250;
 
     this.reconnectAttempts += 1;
 
@@ -160,5 +189,23 @@ export class SignalingClient {
 
     window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+  }
+
+  private flushTranscripts(): void {
+    if (!this.peerPresent) return;
+    this.transcripts.flush(performance.now(), (wire) => {
+      if (
+        !this.socket ||
+        this.socket.readyState !== WebSocket.OPEN ||
+        this.socket.bufferedAmount > 16 * 1024
+      )
+        return false;
+      try {
+        this.socket.send(wire);
+        return true;
+      } catch {
+        return false;
+      }
+    });
   }
 }

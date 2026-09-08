@@ -111,6 +111,7 @@ export const joinSession = async (code: string): Promise<JoinedSession> => {
 export const createSignalTicket = async (sessionId: string, peerToken: string): Promise<string> => {
   const response = await fetch(`${getApiUrl()}/api/sessions/${sessionId}/signal-ticket`, {
     method: 'POST',
+    signal: AbortSignal.timeout(15_000),
 
     headers: {
       'Content-Type': 'application/json',

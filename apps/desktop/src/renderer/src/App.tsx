@@ -16,6 +16,7 @@ import { getMicrophoneStream, stopMediaStream } from './features/audio/microphon
 import { getSystemAudioStream } from './features/audio/system-audio';
 import { TranscriptStore, type TranscriptEntry } from './features/transcript/transcript-store';
 import { TerminologyEngine } from './features/transcript/terminology-engine';
+import { formatTranscript } from './features/transcript/format-transcript';
 import { interviewVocabulary } from './features/transcript/vocabulary';
 import { createSession, createSignalTicket, getApiUrl, joinSession, setApiUrl } from './lib/api';
 import { AsrClient } from './lib/asr-client';
@@ -25,7 +26,7 @@ import type { ConnectionStats } from './lib/webrtc/connection-stats';
 import { RealtimePeer, type LocalAudioStreams } from './lib/webrtc/realtime-peer';
 import { getRtcConfiguration } from './lib/webrtc/rtc-config';
 
-const DOCUMENT_SEND_DELAY_MS = 50;
+const DOCUMENT_SEND_DELAY_MS = 200;
 const MAX_DOCUMENT_CHARACTERS = 250_000;
 
 type SessionStatus =
@@ -164,7 +165,7 @@ export const App = (): JSX.Element => {
       }
 
       const normalized = terminologyEngineRef.current.normalize(
-        result.text,
+        formatTranscript(result.text, result.type === 'final'),
         transcriptStoreRef.current.recentFinalText(activeRole, result.source),
       );
 

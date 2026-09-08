@@ -270,7 +270,10 @@ void FinalizeStream(const SherpaOnnxOnlineRecognizer* recognizer, uint8_t source
 
   const SherpaOnnxOnlineRecognizerResult* result =
       SherpaOnnxGetOnlineStreamResult(recognizer, state->stream);
-  const std::string text = state->has_detected_speech ? state->last_text : "";
+  const std::string decoded =
+      result != nullptr && result->text != nullptr ? result->text : "";
+  const std::string text = state->has_detected_speech
+      ? (decoded.empty() ? state->last_text : decoded) : "";
 
   if (!text.empty()) {
     EmitResult(source, *state, "final", text, true);
@@ -325,7 +328,8 @@ void AcceptAudio(const SherpaOnnxOnlineRecognizer* recognizer, uint8_t source,
   const bool endpoint = SherpaOnnxOnlineStreamIsEndpoint(recognizer, state.stream) != 0;
 
   if (endpoint) {
-    const std::string final_text = state.has_detected_speech ? state.last_text : "";
+    const std::string final_text = state.has_detected_speech
+        ? (text.empty() ? state.last_text : text) : "";
 
     if (!final_text.empty()) {
       EmitResult(source, state, "final", final_text, true);

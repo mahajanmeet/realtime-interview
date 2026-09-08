@@ -8,10 +8,12 @@ type DocumentChannelCallbacks = {
 
 const CHANNEL_NAME = 'document';
 
-const MAX_BUFFERED_BYTES = 512 * 1024;
+const MAX_BUFFERED_BYTES = 16 * 1024;
 
 export class DocumentChannel {
   private channel: RTCDataChannel | null = null;
+  private pending: DocumentUpdate | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly callbacks: DocumentChannelCallbacks) {}
 
@@ -33,6 +35,12 @@ export class DocumentChannel {
   }
 
   send(update: DocumentUpdate): void {
+    this.pending = update;
+    this.flush();
+  }
+
+  private flush(): void {
+    if (!this.pending) return;
     if (!this.channel || this.channel.readyState !== 'open') {
       return;
     }
@@ -41,10 +49,21 @@ export class DocumentChannel {
       return;
     }
 
-    this.channel.send(JSON.stringify(update));
+    // Never silently discard the latest edit when the buffer is full.
+    // Large-document chunking is a separate protocol change; this keeps the
+    // existing wire format compatible with installed clients.
+    try {
+      this.channel.send(JSON.stringify(this.pending));
+      this.pending = null;
+    } catch {
+      // Retain the latest snapshot until the transport can send again.
+    }
   }
 
   close(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    this.pending = null;
     this.channel?.close();
     this.channel = null;
   }
@@ -53,9 +72,12 @@ export class DocumentChannel {
     this.channel?.close();
 
     this.channel = channel;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = setInterval(() => this.flush(), 200);
 
     channel.addEventListener('open', () => {
       this.callbacks.onOpen();
+      this.flush();
     });
 
     channel.addEventListener('close', () => {

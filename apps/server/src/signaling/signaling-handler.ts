@@ -7,6 +7,8 @@ import type { SessionService } from '../sessions/session-service';
 
 type PeerSocket = {
   readyState: number;
+  bufferedAmount: number;
+  terminate(): void;
   send(data: string): void;
 };
 
@@ -62,6 +64,20 @@ export const registerSignalingRoutes = async (
       }
 
       peers[role] = socket;
+      let alive = true;
+      socket.on('pong', () => {
+        alive = true;
+      });
+      const heartbeat = setInterval(() => {
+        if (!alive) {
+          socket.terminate();
+          return;
+        }
+        alive = false;
+        if (socket.readyState === OPEN) socket.ping();
+      }, 15_000);
+      heartbeat.unref();
+      socket.on('error', () => socket.terminate());
 
       const otherRole: AppRole = role === 'interviewer' ? 'candidate' : 'interviewer';
 
@@ -115,6 +131,12 @@ export const registerSignalingRoutes = async (
         const destination = peers?.[otherRole];
 
         if (destination && destination.readyState === OPEN) {
+          // Disconnect a stalled reader instead of buffering seconds of stale
+          // text indefinitely. Recent snapshots replay after reconnect.
+          if (destination.bufferedAmount > 128 * 1024) {
+            destination.terminate();
+            return;
+          }
           if (message.data.type === 'transcript-segment') {
             // The server derives the speaker from the authenticated, single-use
             // signaling ticket. A client cannot label a segment as the other peer.
@@ -132,15 +154,17 @@ export const registerSignalingRoutes = async (
       });
 
       socket.on('close', () => {
+        clearInterval(heartbeat);
         const current = connections.get(sessionId);
 
         if (!current) {
           return;
         }
 
-        if (current[role] === socket) {
-          delete current[role];
-        }
+        // A late close from the previous connection must not mark its
+        // replacement as disconnected.
+        if (current[role] !== socket) return;
+        delete current[role];
 
         const remaining = current[otherRole];
 
