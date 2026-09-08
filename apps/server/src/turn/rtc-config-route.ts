@@ -18,6 +18,14 @@ export const registerRtcConfigRoute = async (
     config.turnSharedSecret && config.turnUrls.length > 0
       ? new TurnService(config.turnSharedSecret, config.turnUrls)
       : null;
+  const staticTurnCredentials =
+    config.turnUsername && config.turnCredential && config.turnUrls.length > 0
+      ? {
+          urls: config.turnUrls,
+          username: config.turnUsername,
+          credential: config.turnCredential,
+        }
+      : null;
 
   app.post('/api/rtc-config', async (request, reply) => {
     const body = RtcConfigBodySchema.safeParse(request.body);
@@ -44,6 +52,8 @@ export const registerRtcConfigRoute = async (
         const credentials = turnService.createCredentials(`${identity.sessionId}:${identity.role}`);
 
         iceServers.push(credentials);
+      } else if (staticTurnCredentials) {
+        iceServers.push(staticTurnCredentials);
       }
 
       return {

@@ -115,6 +115,18 @@ export const registerSignalingRoutes = async (
         const destination = peers?.[otherRole];
 
         if (destination && destination.readyState === OPEN) {
+          if (message.data.type === 'transcript-segment') {
+            // The server derives the speaker from the authenticated, single-use
+            // signaling ticket. A client cannot label a segment as the other peer.
+            destination.send(
+              JSON.stringify({
+                ...message.data,
+                speaker: role,
+              }),
+            );
+            return;
+          }
+
           destination.send(JSON.stringify(message.data));
         }
       });

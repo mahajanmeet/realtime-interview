@@ -6,7 +6,6 @@ import type {
   AudioSource,
   DocumentUpdate,
   ServerSignalMessage,
-  TranscriptSegment,
 } from '@interview/shared';
 
 import { ConnectionInfo } from './components/ConnectionInfo';
@@ -15,7 +14,7 @@ import { TranscriptView } from './components/TranscriptView';
 import { IncomingAudioPipeline } from './features/audio/incoming-audio-pipeline';
 import { getMicrophoneStream, stopMediaStream } from './features/audio/microphone';
 import { getSystemAudioStream } from './features/audio/system-audio';
-import { TranscriptStore } from './features/transcript/transcript-store';
+import { TranscriptStore, type TranscriptEntry } from './features/transcript/transcript-store';
 import { TerminologyEngine } from './features/transcript/terminology-engine';
 import { interviewVocabulary } from './features/transcript/vocabulary';
 import { createSession, createSignalTicket, getApiUrl, joinSession, setApiUrl } from './lib/api';
@@ -72,11 +71,15 @@ export const App = (): JSX.Element => {
   const [displayCode, setDisplayCode] = useState('');
   const [status, setStatus] = useState<SessionStatus>('idle');
   const [hasConnected, setHasConnected] = useState(false);
+  const [hasSignalingPeer, setHasSignalingPeer] = useState(false);
   const [documentText, setDocumentText] = useState('');
   const [documentReady, setDocumentReady] = useState(false);
   const [remoteMicrophoneStream, setRemoteMicrophoneStream] = useState<MediaStream | null>(null);
   const [remoteSystemStream, setRemoteSystemStream] = useState<MediaStream | null>(null);
   const [candidateMicrophoneActive, setCandidateMicrophoneActive] = useState(false);
+  const [microphoneTestStatus, setMicrophoneTestStatus] = useState<CaptureStatus>('idle');
+  const [microphoneEnabled, setMicrophoneEnabled] = useState(true);
+  const [systemAudioEnabled, setSystemAudioEnabled] = useState(false);
   const [systemAudioStatus, setSystemAudioStatus] = useState<CaptureStatus>('idle');
   const [interviewerMicrophoneStatus, setInterviewerMicrophoneStatus] =
     useState<InterviewerMicrophoneStatus>('off');
@@ -84,10 +87,35 @@ export const App = (): JSX.Element => {
     createEmptyAudioPipelineStatus(),
   );
   const [asrStatus, setAsrStatus] = useState<AsrStatus>({ state: 'stopped' });
-  const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
+  const [transcriptSegments, setTranscriptSegments] = useState<TranscriptEntry[]>([]);
   const [networkStats, setNetworkStats] = useState<ConnectionStats | null>(null);
   const [error, setError] = useState('');
   const [warning, setWarning] = useState('');
+  const [setupMode, setSetupMode] = useState<'create' | 'join'>('create');
+  const [sessionBusy, setSessionBusy] = useState(false);
+  const sessionBusyRef = useRef(false);
+  const [copyMessage, setCopyMessage] = useState('');
+
+  const runSessionAction = async (action: () => Promise<void>): Promise<void> => {
+    if (sessionBusyRef.current) return;
+    sessionBusyRef.current = true;
+    setSessionBusy(true);
+    try {
+      await action();
+    } finally {
+      sessionBusyRef.current = false;
+      setSessionBusy(false);
+    }
+  };
+
+  const copyInterviewCode = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(displayCode);
+      setCopyMessage('Code copied');
+    } catch {
+      setCopyMessage('Select the code and copy it manually.');
+    }
+  };
 
   const saveBackendUrl = (): boolean => {
     try {
@@ -129,12 +157,18 @@ export const App = (): JSX.Element => {
   useEffect(() => {
     const asrClient = asrClientRef.current;
     const removeResultHandler = asrClient.onResult((result) => {
+      const activeRole = role;
+
+      if (!activeRole) {
+        return;
+      }
+
       const normalized = terminologyEngineRef.current.normalize(
         result.text,
-        transcriptStoreRef.current.recentFinalText(result.source),
+        transcriptStoreRef.current.recentFinalText(activeRole, result.source),
       );
 
-      transcriptStoreRef.current.upsert({
+      const segment: TranscriptEntry = {
         id: result.segmentId,
         source: result.source,
         startMs: result.startMs,
@@ -142,8 +176,30 @@ export const App = (): JSX.Element => {
         text: normalized.text,
         rawText: result.text,
         status: result.type,
-      });
+        speaker: activeRole,
+      };
+
+      transcriptStoreRef.current.upsert(segment);
       setTranscriptSegments(transcriptStoreRef.current.all());
+
+      try {
+        signalingRef.current?.send({
+          type: 'transcript-segment',
+          segment: {
+            id: segment.id,
+            source: segment.source,
+            startMs: segment.startMs,
+            endMs: segment.endMs,
+            text: segment.text,
+            rawText: segment.rawText,
+            status: segment.status,
+          },
+        });
+      } catch (cause) {
+        logger.warn('Transcript segment will remain local until signaling reconnects.', {
+          error: cause instanceof Error ? cause.message : 'Unknown error',
+        });
+      }
     });
     const removeStatusHandler = asrClient.onStatus(setAsrStatus);
 
@@ -151,7 +207,7 @@ export const App = (): JSX.Element => {
       removeResultHandler();
       removeStatusHandler();
     };
-  }, []);
+  }, [role]);
 
   useEffect(() => {
     playRemoteAudio(remoteMicrophoneAudioRef.current, remoteMicrophoneStream, setError);
@@ -211,6 +267,7 @@ export const App = (): JSX.Element => {
     }
 
     setSystemAudioStatus('idle');
+    setSystemAudioEnabled(false);
   };
 
   const reconnectSignaling = async (): Promise<string> => {
@@ -361,18 +418,22 @@ export const App = (): JSX.Element => {
 
     updateStream(stream);
 
-    if (appRole === 'interviewer') {
-      void startIncomingAudioPipeline(source, stream);
-    }
-
     track?.addEventListener(
       'ended',
       () => {
         updateStream((current) => (current === stream ? null : current));
+      },
+      { once: true },
+    );
+  };
 
-        if (appRole === 'interviewer') {
-          void stopIncomingAudioPipeline(source, stream);
-        }
+  const startLocalTranscriptPipeline = (source: AudioSource, stream: MediaStream): void => {
+    void startIncomingAudioPipeline(source, stream);
+
+    stream.getAudioTracks()[0]?.addEventListener(
+      'ended',
+      () => {
+        void stopIncomingAudioPipeline(source, stream);
       },
       { once: true },
     );
@@ -416,6 +477,7 @@ export const App = (): JSX.Element => {
       onReconnectRequested: reconnectSignaling,
       onMessage: (message: ServerSignalMessage) => {
         if (message.type === 'peer-connected') {
+          setHasSignalingPeer(true);
           setStatus(hasConnectedRef.current ? 'connected' : 'connecting');
 
           if (appRole === 'interviewer') {
@@ -427,7 +489,17 @@ export const App = (): JSX.Element => {
         }
 
         if (message.type === 'peer-disconnected') {
+          setHasSignalingPeer(false);
           setStatus(hasConnectedRef.current ? 'reconnecting' : 'disconnected');
+          return;
+        }
+
+        if (message.type === 'transcript-segment') {
+          transcriptStoreRef.current.upsert({
+            ...message.segment,
+            speaker: message.speaker,
+          });
+          setTranscriptSegments(transcriptStoreRef.current.all());
           return;
         }
 
@@ -456,6 +528,9 @@ export const App = (): JSX.Element => {
 
           if (connectionState === 'failed') {
             setStatus('failed');
+            setError(
+              'The peer audio connection could not be established. Live transcription and text sync remain active; configure TURN only if you also need remote live audio.',
+            );
             return;
           }
 
@@ -501,6 +576,7 @@ export const App = (): JSX.Element => {
       setRemoteMicrophoneStream(null);
       setRemoteSystemStream(null);
       setCandidateMicrophoneActive(false);
+      setHasSignalingPeer(false);
       resetSystemAudio();
       resetDocument();
       transcriptStoreRef.current.clear();
@@ -539,12 +615,14 @@ export const App = (): JSX.Element => {
 
       systemAudioStreamRef.current = stream;
       setSystemAudioStatus('ready');
+      setSystemAudioEnabled(true);
       track.addEventListener(
         'ended',
         () => {
           if (systemAudioStreamRef.current === stream) {
             systemAudioStreamRef.current = null;
             setSystemAudioStatus('idle');
+            setSystemAudioEnabled(false);
           }
         },
         { once: true },
@@ -552,6 +630,41 @@ export const App = (): JSX.Element => {
     } catch (cause) {
       setSystemAudioStatus('error');
       setError(cause instanceof Error ? cause.message : 'Could not capture system audio.');
+    }
+  };
+
+  const handleSystemAudioSelection = async (enabled: boolean): Promise<void> => {
+    if (!enabled) {
+      resetSystemAudio();
+      setError('');
+      return;
+    }
+
+    await handleSystemAudioToggle();
+  };
+
+  const handleMicrophoneTest = async (): Promise<void> => {
+    let stream: MediaStream | null = null;
+
+    try {
+      setError('');
+      setMicrophoneTestStatus('starting');
+      stream = await getMicrophoneStream();
+
+      const track = stream.getAudioTracks()[0];
+
+      if (!track || track.readyState !== 'live') {
+        throw new Error('The microphone did not provide a live audio track.');
+      }
+
+      setMicrophoneTestStatus('ready');
+    } catch (cause) {
+      setMicrophoneTestStatus('error');
+      setError(cause instanceof Error ? cause.message : 'Could not test the microphone.');
+    } finally {
+      if (stream) {
+        stopMediaStream(stream);
+      }
     }
   };
 
@@ -572,19 +685,31 @@ export const App = (): JSX.Element => {
         return;
       }
 
-      try {
-        microphone = await getMicrophoneStream();
-        setCandidateMicrophoneActive(true);
-        microphone.getAudioTracks()[0]?.addEventListener(
-          'ended',
-          () => {
-            setCandidateMicrophoneActive(false);
-          },
-          { once: true },
-        );
-      } catch (cause) {
-        const message = cause instanceof Error ? cause.message : 'Could not access the microphone.';
-        microphoneWarning = `${message} You can continue without microphone audio.`;
+      const systemAudio = systemAudioEnabled ? systemAudioStreamRef.current : null;
+
+      if (!microphoneEnabled && !systemAudio) {
+        setError('Turn on microphone or system audio before joining.');
+        return;
+      }
+
+      if (microphoneEnabled) {
+        try {
+          microphone = await getMicrophoneStream();
+          setCandidateMicrophoneActive(true);
+          microphone.getAudioTracks()[0]?.addEventListener(
+            'ended',
+            () => {
+              setCandidateMicrophoneActive(false);
+            },
+            { once: true },
+          );
+        } catch (cause) {
+          const message =
+            cause instanceof Error ? cause.message : 'Could not access the microphone.';
+          microphoneWarning = `${message} You can continue without microphone audio.`;
+          setCandidateMicrophoneActive(false);
+        }
+      } else {
         setCandidateMicrophoneActive(false);
       }
 
@@ -594,14 +719,30 @@ export const App = (): JSX.Element => {
       setRole('candidate');
       hasConnectedRef.current = false;
       setHasConnected(false);
+      setHasSignalingPeer(false);
       setRemoteMicrophoneStream(null);
       setRemoteSystemStream(null);
       setWarning(microphoneWarning);
       resetDocument();
       await startRealtime('candidate', session.signalTicket, {
         microphone,
-        system: systemAudioStreamRef.current ?? undefined,
+        system: systemAudio ?? undefined,
       });
+
+      void asrClientRef.current.start().catch((cause: unknown) => {
+        const message =
+          cause instanceof Error ? cause.message : 'Local transcription could not start.';
+        setAsrStatus({ state: 'error', message });
+        logger.warn('Local transcription could not start.', { error: message });
+      });
+
+      if (microphone) {
+        startLocalTranscriptPipeline('microphone', microphone);
+      }
+
+      if (systemAudio) {
+        startLocalTranscriptPipeline('system', systemAudio);
+      }
 
       microphone = undefined;
     } catch (cause) {
@@ -646,6 +787,7 @@ export const App = (): JSX.Element => {
       await peer.setInterviewerMicrophone(stream);
 
       interviewerMicrophoneStreamRef.current = stream;
+      startLocalTranscriptPipeline('microphone', stream);
       setInterviewerMicrophoneStatus('on');
       const activeStream = stream;
 
@@ -722,16 +864,32 @@ export const App = (): JSX.Element => {
   const systemAudioConnected =
     role === 'interviewer' ? Boolean(remoteSystemStream) : systemAudioStatus === 'ready';
 
-  if (role && hasConnected) {
+  if (role && hasSignalingPeer) {
     return (
       <main className="workspace">
         <header className="workspace-header">
-          <h1 className="workspace-title">Realtime Interview</h1>
+          <div className="workspace-brand">
+            <span className="brand-mark" aria-hidden="true">
+              ri
+            </span>
+            <div>
+              <h1 className="workspace-title">Realtime Interview</h1>
+              <span className="workspace-subtitle">
+                {role === 'interviewer' ? 'Interviewer' : 'Candidate'} workspace
+              </span>
+            </div>
+          </div>
 
           <div className="workspace-header-actions">
             <div className="source-statuses" aria-label="Audio source status">
-              <AudioSourceStatus label="Mic" active={microphoneConnected} />
-              <AudioSourceStatus label="System" active={systemAudioConnected} />
+              <AudioSourceStatus
+                label={role === 'interviewer' ? 'Candidate mic' : 'Your mic'}
+                active={microphoneConnected}
+              />
+              <AudioSourceStatus
+                label={role === 'interviewer' ? 'Candidate system' : 'Your system'}
+                active={systemAudioConnected}
+              />
             </div>
 
             {role === 'interviewer' && (
@@ -755,6 +913,13 @@ export const App = (): JSX.Element => {
                 }}
               >
                 <MicrophoneIcon muted={interviewerMicrophoneStatus !== 'on'} />
+                <span>
+                  {interviewerMicrophoneStatus === 'starting'
+                    ? 'Starting...'
+                    : interviewerMicrophoneStatus === 'on'
+                      ? 'Mute mic'
+                      : 'Unmute mic'}
+                </span>
               </button>
             )}
 
@@ -775,8 +940,16 @@ export const App = (): JSX.Element => {
 
         {(error || warning) && (
           <div className="workspace-notices">
-            {error && <p className="error">{error}</p>}
-            {warning && <p className="warning">{warning}</p>}
+            {error && (
+              <p className="error" role="alert">
+                {error}
+              </p>
+            )}
+            {warning && (
+              <p className="warning" role="status">
+                {warning}
+              </p>
+            )}
           </div>
         )}
 
@@ -787,9 +960,7 @@ export const App = (): JSX.Element => {
             onChange={handleDocumentChange}
           />
 
-          {role === 'interviewer' && (
-            <TranscriptView segments={transcriptSegments} asrStatus={asrStatus} />
-          )}
+          <TranscriptView segments={transcriptSegments} asrStatus={asrStatus} />
         </div>
 
         <audio ref={remoteMicrophoneAudioRef} autoPlay />
@@ -801,77 +972,187 @@ export const App = (): JSX.Element => {
   return (
     <main className="page">
       <section className="card">
-        <h1>Realtime Interview</h1>
+        <header className="welcome-header">
+          <span className="brand-mark" aria-hidden="true">
+            ri
+          </span>
+          <span className="eyebrow">Realtime Interview</span>
+          <h1>{role ? 'Your interview room' : 'Make room for a great conversation.'}</h1>
+          <p className="welcome-description">
+            {role
+              ? 'Keep this window open while your participant connects.'
+              : 'Shared notes and live transcripts, together in one focused workspace.'}
+          </p>
+        </header>
 
         {!role && (
           <>
-            <section className="backend-setup" aria-labelledby="backend-setup-title">
-              <h2 id="backend-setup-title">Backend address</h2>
-              <label htmlFor="backend-url">Use the same address on both devices</label>
-              <input
-                id="backend-url"
-                value={backendUrl}
-                inputMode="url"
-                placeholder="https://your-service.onrender.com"
-                onChange={(event) => setBackendUrl(event.target.value)}
-                onBlur={saveBackendUrl}
-              />
-            </section>
+            <details className="connection-settings">
+              <summary>
+                Connection settings <span>Server address</span>
+              </summary>
+              <section className="backend-setup" aria-labelledby="backend-setup-title">
+                <h2 id="backend-setup-title">Backend address</h2>
+                <label htmlFor="backend-url">Use the same address on both devices</label>
+                <input
+                  id="backend-url"
+                  value={backendUrl}
+                  inputMode="url"
+                  spellCheck={false}
+                  autoCapitalize="none"
+                  disabled={sessionBusy}
+                  placeholder="https://your-service.onrender.com"
+                  onChange={(event) => setBackendUrl(event.target.value)}
+                  onBlur={saveBackendUrl}
+                />
+              </section>
+            </details>
 
-            <button type="button" onClick={() => void handleCreate()}>
-              Create Interview
-            </button>
+            <div
+              className="setup-switch"
+              role="group"
+              aria-label="Choose how to enter an interview"
+            >
+              <button
+                type="button"
+                aria-pressed={setupMode === 'create'}
+                disabled={sessionBusy}
+                onClick={() => setSetupMode('create')}
+              >
+                Create interview
+              </button>
+              <button
+                type="button"
+                aria-pressed={setupMode === 'join'}
+                disabled={sessionBusy}
+                onClick={() => setSetupMode('join')}
+              >
+                Join interview
+              </button>
+            </div>
 
-            <div className="divider">or</div>
-
-            <input
-              value={joinCode}
-              inputMode="numeric"
-              maxLength={7}
-              placeholder="6-digit code"
-              onChange={(event) => setJoinCode(event.target.value)}
-            />
-
-            <section className="audio-setup" aria-labelledby="audio-setup-title">
-              <h2 id="audio-setup-title">Audio setup</h2>
-
-              <div className="audio-source-row">
-                <div>
-                  <strong>Microphone</strong>
-                  <span>Requested when you join</span>
-                </div>
-                <span className="audio-source-state">Automatic</span>
-              </div>
-
-              <div className="audio-source-row">
-                <div>
-                  <strong>System audio</strong>
-                  <span>Optional; shares computer playback only</span>
-                </div>
+            {setupMode === 'create' ? (
+              <section className="create-panel">
+                <span className="eyebrow">For interviewers</span>
+                <h2>Start a new conversation</h2>
+                <p>
+                  Get a six-digit invitation code to share with your candidate. Your microphone
+                  starts muted.
+                </p>
                 <button
                   type="button"
-                  className="secondary-button"
-                  disabled={systemAudioStatus === 'starting'}
-                  onClick={() => void handleSystemAudioToggle()}
+                  className="primary-button"
+                  disabled={sessionBusy}
+                  onClick={() => void runSessionAction(handleCreate)}
                 >
-                  {getSystemAudioButtonLabel(systemAudioStatus)}
+                  {sessionBusy ? 'Creating your room...' : 'Create interview room'}
                 </button>
-              </div>
-            </section>
+              </section>
+            ) : (
+              <form
+                className="join-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void runSessionAction(handleJoin);
+                }}
+              >
+                <label className="field-label" htmlFor="interview-code">
+                  Interview code
+                </label>
+                <input
+                  id="interview-code"
+                  className="code-input"
+                  value={joinCode}
+                  inputMode="numeric"
+                  maxLength={7}
+                  autoComplete="off"
+                  aria-describedby="code-help"
+                  disabled={sessionBusy}
+                  placeholder="000 000"
+                  onChange={(event) => setJoinCode(event.target.value)}
+                />
+                <p className="field-help" id="code-help">
+                  Enter the six-digit code shared by your interviewer.
+                </p>
 
-            <button type="button" onClick={() => void handleJoin()}>
-              Join Interview
-            </button>
+                <fieldset className="audio-fieldset" disabled={sessionBusy}>
+                  <section className="audio-setup" aria-labelledby="audio-setup-title">
+                    <h2 id="audio-setup-title">Audio setup</h2>
+
+                    <div className="audio-source-row">
+                      <div>
+                        <strong>Microphone</strong>
+                        <span>{getMicrophoneSetupMessage(microphoneTestStatus)}</span>
+                      </div>
+                      <div className="audio-source-actions">
+                        <AudioSetupToggle
+                          label="Microphone"
+                          enabled={microphoneEnabled}
+                          onChange={setMicrophoneEnabled}
+                        />
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={!microphoneEnabled || microphoneTestStatus === 'starting'}
+                          onClick={() => void handleMicrophoneTest()}
+                        >
+                          {getMicrophoneTestButtonLabel(microphoneTestStatus)}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="audio-source-row">
+                      <div>
+                        <strong>System audio</strong>
+                        <span>Optional: capture audio playing on your computer</span>
+                      </div>
+                      <AudioSetupToggle
+                        label="System audio"
+                        enabled={systemAudioEnabled}
+                        disabled={systemAudioStatus === 'starting'}
+                        onChange={(enabled) => {
+                          void handleSystemAudioSelection(enabled);
+                        }}
+                      />
+                    </div>
+                  </section>
+                </fieldset>
+
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={sessionBusy || joinCode.replace(/\D/g, '').length !== 6}
+                >
+                  {sessionBusy ? 'Joining your interview...' : 'Join interview'}
+                </button>
+              </form>
+            )}
+            <p className="setup-footer">
+              Audio is transcribed on your device. Share only the sources you choose.
+            </p>
           </>
         )}
 
         {role === 'interviewer' && displayCode && (
-          <section>
-            <p>Interview code</p>
-            <h2>
+          <section className="waiting-panel">
+            <p className="eyebrow">Share this invitation code</p>
+            <h2 className="invitation-code">
               {displayCode.slice(0, 3)} {displayCode.slice(3)}
             </h2>
-            <p className="muted">Waiting for candidate...</p>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void copyInterviewCode()}
+            >
+              Copy invitation code
+            </button>
+            <p className="field-help" role="status">
+              {copyMessage || 'Your candidate selects Join interview and enters this code.'}
+            </p>
+            <p className="waiting-status">
+              <span className="source-dot" aria-hidden="true" />
+              Waiting for your candidate
+            </p>
           </section>
         )}
 
@@ -885,8 +1166,16 @@ export const App = (): JSX.Element => {
           </section>
         )}
 
-        {error && <p className="error">{error}</p>}
-        {warning && <p className="warning">{warning}</p>}
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        {warning && (
+          <p className="warning" role="status">
+            {warning}
+          </p>
+        )}
       </section>
     </main>
   );
@@ -917,6 +1206,34 @@ const AudioSourceStatus = ({ label, active }: { label: string; active: boolean }
   </span>
 );
 
+type AudioSetupToggleProps = {
+  label: string;
+  enabled: boolean;
+  disabled?: boolean;
+  onChange(enabled: boolean): void;
+};
+
+const AudioSetupToggle = ({
+  label,
+  enabled,
+  disabled = false,
+  onChange,
+}: AudioSetupToggleProps): JSX.Element => (
+  <label className="source-toggle">
+    <input
+      type="checkbox"
+      checked={enabled}
+      disabled={disabled}
+      aria-label={`${label} ${enabled ? 'on' : 'off'}`}
+      onChange={(event) => onChange(event.target.checked)}
+    />
+    <span className="source-toggle-track" aria-hidden="true">
+      <span className="source-toggle-thumb" />
+    </span>
+    <span>{enabled ? 'On' : 'Off'}</span>
+  </label>
+);
+
 const MicrophoneIcon = ({ muted }: { muted: boolean }): JSX.Element => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z" />
@@ -935,6 +1252,30 @@ const getSystemAudioButtonLabel = (status: CaptureStatus): string => {
       return 'Try again';
     default:
       return 'Share system audio';
+  }
+};
+
+const getMicrophoneTestButtonLabel = (status: CaptureStatus): string => {
+  switch (status) {
+    case 'starting':
+      return 'Testing...';
+    case 'ready':
+      return 'Mic ready';
+    case 'error':
+      return 'Try again';
+    default:
+      return 'Test microphone';
+  }
+};
+
+const getMicrophoneSetupMessage = (status: CaptureStatus): string => {
+  switch (status) {
+    case 'ready':
+      return 'Permission and live audio track confirmed';
+    case 'error':
+      return 'Microphone test failed; see the message below';
+    default:
+      return 'Test it now, or it will be requested when you join';
   }
 };
 

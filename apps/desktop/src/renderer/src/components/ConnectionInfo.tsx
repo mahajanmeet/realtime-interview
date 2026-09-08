@@ -1,4 +1,4 @@
-import { useState, type JSX } from 'react';
+import { useEffect, useRef, useState, type JSX } from 'react';
 
 import type { AppRole } from '@interview/shared';
 
@@ -35,21 +35,51 @@ export const ConnectionInfo = ({
   networkStats,
 }: ConnectionInfoProps): JSX.Element => {
   const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const dismissOutside = (event: PointerEvent): void => {
+      if (event.target instanceof Node && !containerRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    const dismissWithEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', dismissOutside);
+    document.addEventListener('keydown', dismissWithEscape);
+    return () => {
+      document.removeEventListener('pointerdown', dismissOutside);
+      document.removeEventListener('keydown', dismissWithEscape);
+    };
+  }, [open]);
 
   return (
-    <div className="connection-info">
+    <div className="connection-info" ref={containerRef}>
       <button
+        ref={buttonRef}
         type="button"
         className="info-button"
         aria-label="Connection information"
         aria-expanded={open}
+        aria-controls="connection-details"
         onClick={() => setOpen((current) => !current)}
       >
         {'\u24d8'}
       </button>
 
       {open && (
-        <div className="info-popover">
+        <div
+          className="info-popover"
+          id="connection-details"
+          role="region"
+          aria-label="Connection details"
+        >
           <InfoRow label="Connection" value={connectionStatus} />
           <InfoRow label="Role" value={role} />
           <InfoRow label="Document" value={documentReady ? 'Connected' : 'Waiting'} />

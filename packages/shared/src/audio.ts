@@ -1,3 +1,4 @@
+import './zod-config';
 import { z } from 'zod';
 
 export const AudioSourceSchema = z.enum(['microphone', 'system']);

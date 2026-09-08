@@ -1,4 +1,7 @@
+import './zod-config';
 import { z } from 'zod';
+
+import { TranscriptSegmentSchema } from './transcript';
 
 export const AppRoleSchema = z.enum(['interviewer', 'candidate']);
 
@@ -27,7 +30,7 @@ export const IceCandidateSchema = z.object({
   usernameFragment: z.string().nullable().optional(),
 });
 
-export const ClientSignalMessageSchema = z.discriminatedUnion('type', [
+const WebRtcSignalMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('offer'),
     sdp: z.string().min(1).max(1_000_000),
@@ -44,10 +47,32 @@ export const ClientSignalMessageSchema = z.discriminatedUnion('type', [
   }),
 ]);
 
+export const ClientTranscriptMessageSchema = z.object({
+  type: z.literal('transcript-segment'),
+  segment: TranscriptSegmentSchema.extend({
+    id: z.string().min(1).max(128),
+    text: z.string().min(1).max(12_000),
+    rawText: z.string().max(12_000).optional(),
+  }),
+});
+
+export const ClientSignalMessageSchema = z.union([
+  WebRtcSignalMessageSchema,
+  ClientTranscriptMessageSchema,
+]);
+
 export type ClientSignalMessage = z.infer<typeof ClientSignalMessageSchema>;
 
+export const ServerTranscriptMessageSchema = ClientTranscriptMessageSchema.extend({
+  speaker: AppRoleSchema,
+});
+
+export type ServerTranscriptMessage = z.infer<typeof ServerTranscriptMessageSchema>;
+
 export const ServerSignalMessageSchema = z.union([
-  ClientSignalMessageSchema,
+  WebRtcSignalMessageSchema,
+
+  ServerTranscriptMessageSchema,
 
   z.object({
     type: z.literal('peer-connected'),

@@ -9,9 +9,23 @@ const parseUrls = (value: string | undefined, fallback: string[]): string[] => {
 
 const turnSharedSecret = process.env.TURN_SHARED_SECRET?.trim() || null;
 const turnUrls = parseUrls(process.env.TURN_URLS, []);
+const turnUsername = process.env.TURN_USERNAME?.trim() || null;
+const turnCredential = process.env.TURN_CREDENTIAL?.trim() || null;
 
-if ((turnSharedSecret === null) !== (turnUrls.length === 0)) {
-  throw new Error('TURN_SHARED_SECRET and TURN_URLS must be configured together.');
+if ((turnUsername === null) !== (turnCredential === null)) {
+  throw new Error('TURN_USERNAME and TURN_CREDENTIAL must be configured together.');
+}
+
+if (turnUrls.length === 0 && (turnSharedSecret !== null || turnUsername !== null)) {
+  throw new Error('TURN_URLS must be configured when TURN credentials are configured.');
+}
+
+if (turnUrls.length > 0 && turnSharedSecret === null && turnUsername === null) {
+  throw new Error('Configure TURN_SHARED_SECRET or TURN_USERNAME and TURN_CREDENTIAL with TURN_URLS.');
+}
+
+if (turnSharedSecret !== null && turnUsername !== null) {
+  throw new Error('Use either TURN_SHARED_SECRET or TURN_USERNAME and TURN_CREDENTIAL, not both.');
 }
 
 const iceTransportPolicy = process.env.RTC_ICE_TRANSPORT_POLICY === 'relay' ? 'relay' : 'all';
@@ -22,5 +36,7 @@ export const config = {
   stunUrls: parseUrls(process.env.STUN_URLS, ['stun:stun.l.google.com:19302']),
   turnSharedSecret,
   turnUrls,
+  turnUsername,
+  turnCredential,
   iceTransportPolicy,
 };
